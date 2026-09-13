@@ -77,17 +77,34 @@ While automation is on, the relay installs this add-on as a temporary add-on ove
 4. Clicking Connect stamps a one-time `data-playwriter-<nonce>` attribute on the tab; the relay finds the page with that attribute and marks it shared.
 5. Sessions only see connected tabs plus tabs they open (`context.pages()` is filtered). The session's `page` is the connected tab, or a new agent tab.
 
-## Chrome vs Zen / Firefox
+## Parity with Chrome
 
-| | Chrome | Zen / Firefox |
+Status as of the `firefox-zen-bidi` branch. ✅ same as Chrome, ⚠️ partial, ❌ missing, ❔ untested.
+
+| Area | Chrome | Zen / Firefox |
 |---|---|---|
 | Protocol | CDP through `chrome.debugger` in the extension | WebDriver BiDi from the relay |
-| Turn on | Click the extension icon on a tab | Start with automation (`--restart-browser` or popup), then Connect a tab |
-| Extension | Installed from the Chrome Web Store | Temporary add-on installed by the relay |
-| Agent sees | Clicked tabs + agent tabs | Connected tabs + agent tabs |
-| `snapshot`, labeled screenshots | Yes | Yes, same format |
-| CDP APIs (`getCDPSession`, CDP network, debugger) | Yes | No, throws `not available in Firefox mode` |
-| Clients per browser | Many | One BiDi session, held by the relay |
+| CLI sessions, `execute`, `reset` | ✅ | ✅ |
+| MCP | ✅ | ✅ `PLAYWRITER_BROWSER=firefox` |
+| `snapshot`, locators, labeled screenshots, iframes, snapshot diff | ✅ | ✅ same output format |
+| Playwright API (navigation, clicks, `page.route`, screenshots) | ✅ | ✅ |
+| Connect / disconnect a tab from the toolbar | ✅ | ✅ |
+| Agent sees only shared + agent tabs | ✅ | ⚠️ enforced by the relay, `page.context()` can reach every tab |
+| Attach to the already running browser without restart | ✅ | ❌ one restart to turn automation on |
+| Toolbar icon always present | ✅ Chrome Web Store | ❌ only while automation is on, needs an AMO-signed add-on |
+| `getCDPSession`, raw CDP commands | ✅ | ❌ |
+| `getStylesForLocator` | ✅ | ❌ |
+| React component source | ✅ | ❌ |
+| Debugger (breakpoints, stepping) | ✅ | ❌ |
+| Editor (live edit scripts and stylesheets) | ✅ | ❌ |
+| Screen recording, RTMP streaming | ✅ | ❌ |
+| `playwriter recorder` (record user actions) | ✅ | ❔ |
+| Multiple clients at once (external Playwright on `/cdp`) | ✅ | ❌ one BiDi session, held by the relay |
+| Recovery after relay crash | ✅ automatic | ❌ browser restart |
+| Remote access (`PLAYWRITER_HOST`) | ✅ | ❔ |
+| Automation hidden from sites | ✅ | ❌ `navigator.webdriver` is true |
+| macOS | ✅ | ✅ |
+| Windows, Linux | ✅ | ❔ |
 
 ## Security
 
