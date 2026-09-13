@@ -39,7 +39,7 @@ import { createRecordingApi, createStreamApi } from './screen-recording.js'
 import { createDemoVideo } from './ffmpeg.js'
 import { type GhostCursorClientOptions } from './ghost-cursor.js'
 import { GhostCursorController } from './ghost-cursor-controller.js'
-import { automatedPages, disconnectGeckoBrowser, getOrStartGeckoBrowser, isAgentPage, isAutomatedPage, markAgentPage, scopeGeckoContext, sharedPage } from './firefox-browser.js'
+import { automatedPages, disconnectGeckoBrowser, getOrStartGeckoBrowser, isAgentPage, isAutomatedPage, markAgentPage, scopeGeckoBrowser, scopeGeckoContext, sharedPage } from './firefox-browser.js'
 
 
 const __filename = fileURLToPath(import.meta.url)
@@ -1006,7 +1006,9 @@ export class PlaywrightExecutor {
   private static _firefoxExecutors = new Set<PlaywrightExecutor>()
 
   private onFirefoxPopup = async (page: Page) => {
-    const opener = await page.opener().catch(() => null)
+    const opener = await page.opener().catch(() => {
+      return null
+    })
     if (opener && opener === this.page) {
       this.setupPageListeners(page)
     }
@@ -1022,6 +1024,15 @@ export class PlaywrightExecutor {
     if (this.page && isAgentPage(this.page)) {
       await this.page.close().catch(() => {})
     }
+  }
+
+  /** Firefox mode: user tabs are only visible once connected from the toolbar popup. */
+  private scopedContext(context: BrowserContext): BrowserContext {
+    return this.isFirefoxMode() ? scopeGeckoContext(context) : context
+  }
+
+  private scopedBrowser(): Browser | null {
+    return this.isFirefoxMode() && this.browser ? scopeGeckoBrowser(this.browser) : this.browser
   }
 
   private async connectFirefoxBrowser(): Promise<{ browser: Browser; page: Page; context: BrowserContext }> {
@@ -1297,7 +1308,7 @@ export class PlaywrightExecutor {
 
       await this.ensureConnection()
       const page = await this.getCurrentPage(timeout)
-      const context = this.isFirefoxMode() ? scopeGeckoContext(this.context || page.context()) : this.context || page.context()
+      const context = this.scopedContext(this.context || page.context())
       if (this.isFirefoxMode()) {
         await page.bringToFront().catch(() => {})
       }
@@ -1725,7 +1736,7 @@ export class PlaywrightExecutor {
       let vmContextObj: any = {
         page,
         context,
-        browser: this.browser,
+        browser: this.scopedBrowser(),
         state: this.userState,
         console: customConsole,
         snapshot,
@@ -1773,9 +1784,9 @@ export class PlaywrightExecutor {
         resetPlaywright: async () => {
           const { page: newPage, context: newContext } = await self.reset()
           vmContextObj.page = newPage
-          vmContextObj.context = newContext
-          vmContextObj.browser = self.browser
-          return { page: newPage, context: newContext }
+          vmContextObj.context = self.scopedContext(newContext)
+          vmContextObj.browser = self.scopedBrowser()
+          return { page: newPage, context: vmContextObj.context }
         },
         require: this.sandboxedRequire,
         // Restricted alternative to native import() for allowlisted built-ins.

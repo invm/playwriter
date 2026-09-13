@@ -9,7 +9,9 @@ const STABLE_ATTRS = ['data-testid', 'data-test-id', 'data-test', 'data-cy', 'da
 const VALUE_ROLES = new Set(['textbox', 'searchbox', 'combobox', 'spinbutton', 'slider'])
 const LINE_RE = /^([a-z]+)(?: ("(?:[^"\\]|\\.)*"))?((?: \[[^\]]*\])*)(?::(?: (.*))?)?$/
 
-const unquote = (text: string) => (text.startsWith('"') ? (JSON.parse(text) as string) : text)
+const unquote = (text: string) => {
+  return text.startsWith('"') ? (JSON.parse(text) as string) : text
+}
 
 export function parseAiSnapshot(raw: string): RawAxNode[] {
   const lines = raw.split('\n').flatMap((line): AxLine[] => {
@@ -76,7 +78,9 @@ class GeckoSnapshotSession {
 
   private async load() {
     this.nodes = parseAiSnapshot((await (this.page as Page & { _snapshotForAI(): Promise<{ full: string }> })._snapshotForAI()).full)
-    const withRefs = this.nodes.filter((node) => node.ref)
+    const withRefs = this.nodes.filter((node) => {
+      return node.ref
+    })
     const infos = await Promise.all(
       withRefs.map((node) => {
         return this.page
@@ -93,15 +97,23 @@ class GeckoSnapshotSession {
               scope: element.closest('[data-pw-scope]')?.getAttribute('data-pw-scope') ?? null,
             }
           }, STABLE_ATTRS)
-          .catch((): RefInfo => ({ attributes: [], box: null, scope: null }))
+          .catch((): RefInfo => {
+            return { attributes: [], box: null, scope: null }
+          })
       }),
     )
     withRefs.forEach((node, index) => {
       this.infos.set(node.id, infos[index])
     })
-    this.scopeValue = infos.find((info) => info.scope)?.scope ?? null
-    const inScope = withRefs.filter((_, index) => infos[index].scope)
-    this.scopeNodeId = inScope.length ? this.lowestCommonAncestor(inScope.map((node) => node.id)) : null
+    this.scopeValue = infos.find((info) => {
+      return info.scope
+    })?.scope ?? null
+    const inScope = withRefs.filter((_, index) => {
+      return infos[index].scope
+    })
+    this.scopeNodeId = inScope.length ? this.lowestCommonAncestor(inScope.map((node) => {
+      return node.id
+    })) : null
   }
 
   private lowestCommonAncestor(ids: number[]): number {
@@ -114,15 +126,22 @@ class GeckoSnapshotSession {
     }
     const chains = ids.map(chain)
     let depth = 0
-    while (chains.every((c) => c[depth] !== undefined && c[depth] === chains[0][depth])) {
+    while (chains.every((c) => {
+      return c[depth] !== undefined && c[depth] === chains[0][depth]
+    })) {
       depth++
     }
     return chains[0][depth - 1]
   }
 
   private async frameRoot(frameId: string): Promise<number> {
-    for (const node of this.nodes.filter((n) => n.role === 'iframe' && n.ref)) {
-      const handle = await this.page.locator(`aria-ref=${node.ref}`).elementHandle().catch(() => null)
+    const iframes = this.nodes.filter((n) => {
+      return n.role === 'iframe' && n.ref
+    })
+    for (const node of iframes) {
+      const handle = await this.page.locator(`aria-ref=${node.ref}`).elementHandle().catch(() => {
+        return null
+      })
       const frame = await handle?.contentFrame()
       if (frame && (frame as typeof frame & { frameId(): string }).frameId() === frameId) {
         return node.id
@@ -161,7 +180,9 @@ class GeckoSnapshotSession {
             ignored: false,
             role: { type: 'role', value: node.role },
             name: { type: 'computedString', value: node.name },
-            childIds: (node.id === 0 ? rootChildren : node.role === 'iframe' ? [] : node.children).map((child) => String(child + 1)),
+            childIds: (node.id === 0 ? rootChildren : node.role === 'iframe' ? [] : node.children).map((child) => {
+              return String(child + 1)
+            }),
             backendDOMNodeId: node.id + 1,
           }
         })

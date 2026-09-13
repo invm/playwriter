@@ -2,6 +2,7 @@ import { startPlayWriterCDPRelayServer } from './cdp-relay.js'
 import { createFileLogger } from './create-logger.js'
 import { waitForRelayVersion } from './relay-client.js'
 import { LOG_CDP_FILE_PATH } from './utils.js'
+import { disconnectGeckoBrowser } from './firefox-browser.js'
 
 process.title = 'playwriter-ws-server'
 
@@ -52,19 +53,15 @@ export async function startServer({
   console.log('Logs are being written to:', logger.logFilePath)
   console.log('CDP logs are being written to:', LOG_CDP_FILE_PATH)
 
-  process.on('SIGINT', async () => {
+  const shutdown = async () => {
     console.log('\nShutting down...')
     server.close()
-    await import('./firefox-browser.js').then(({ disconnectGeckoBrowser }) => disconnectGeckoBrowser()).catch(() => {})
+    // Close the BiDi session so Zen/Firefox isn't left locked for the next relay.
+    await disconnectGeckoBrowser().catch(() => {})
     process.exit(0)
-  })
-
-  process.on('SIGTERM', async () => {
-    console.log('\nShutting down...')
-    server.close()
-    await import('./firefox-browser.js').then(({ disconnectGeckoBrowser }) => disconnectGeckoBrowser()).catch(() => {})
-    process.exit(0)
-  })
+  }
+  process.on('SIGINT', shutdown)
+  process.on('SIGTERM', shutdown)
 
   return server
 }

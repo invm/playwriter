@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import util from 'node:util'
 import { fileURLToPath } from 'node:url'
+import readline from 'node:readline/promises'
 import { goke, openInBrowser, isAgent } from 'goke'
 import { z } from 'zod'
 import pc from 'picocolors'
@@ -25,6 +26,7 @@ import {
   getExtensionStatus,
   type ExtensionStatus,
 } from './relay-client.js'
+import { findGeckoInstall } from './firefox-browser.js'
 import { discoverChromeInstances, resolveDirectInput, type DiscoveredInstance } from './chrome-discovery.js'
 import { getCloudClient, loadCloudAuth, saveCloudAuth, CloudClient, buildLiveUrl } from './cloud-client.js'
 
@@ -410,12 +412,13 @@ cli
           headers: buildAuthHeaders({ token: options.token, json: true }),
           body: JSON.stringify({ firefox: true, restartBrowser, cwd: process.cwd() }),
         })
-        const json = (await response.json().catch(() => ({}))) as { id?: string; browser?: string; error?: string; needsRestart?: boolean; warning?: string | null }
+        const json = (await response.json().catch(() => {
+          return {}
+        })) as { id?: string; browser?: string; error?: string; needsRestart?: boolean; warning?: string | null }
         return { ok: response.ok, status: response.status, ...json }
       }
       let result = await createSession(Boolean(options.restartBrowser))
       if (result.needsRestart && !isAgent && process.stdin.isTTY) {
-        const readline = await import('node:readline/promises')
         const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
         const answer = await rl.question(`${result.error} Restart it now? [y/N] `)
         rl.close()
@@ -1802,6 +1805,11 @@ cli
       }
     })()
 
+    const geckoInstall = isLocal ? findGeckoInstall() : null
+    const firefoxOption: BrowserOption[] = geckoInstall
+      ? [{ key: 'firefox', type: 'firefox', browser: geckoInstall.name, profile: 'default profile' }]
+      : []
+
     const allOptions: BrowserOption[] = [
       ...extensions.map((ext) => {
         return {
@@ -1814,10 +1822,7 @@ cli
       }),
       ...directInstances.map(instanceToBrowserOption),
       ...headlessOption,
-      ...(isLocal ? await import('./firefox-browser.js').then(({ findGeckoInstall }) => {
-        const install = findGeckoInstall()
-        return install ? [{ key: 'firefox', type: 'firefox' as const, browser: install.name, profile: 'default profile' }] : []
-      }) : []),
+      ...firefoxOption,
       ...cloudOptions,
     ]
 
