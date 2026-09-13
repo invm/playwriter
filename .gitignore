@@ -33,3 +33,5 @@ dist-release
 .env.preview
 .env.prod
 .dev.vars
+
+.amo-upload-uuid

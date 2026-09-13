@@ -1,11 +1,11 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { execFileSync, spawn } from 'node:child_process'
 import type { Browser, BrowserContext, Page } from '@xmorse/playwright-core'
 import { getFirefox } from './playwright-import.js'
+import { readGeckoSecret } from './firefox-native-host.js'
 
 export interface GeckoInstall {
   name: 'Zen' | 'Firefox'
@@ -129,8 +129,8 @@ function runningPids({ install, profile }: { install: GeckoInstall; profile: str
     if (!isBrowser || command.includes('-contentproc')) {
       return []
     }
-    const profileArg = command.match(/--?profile\s+(\S+)/)
-    const onProfile = profileArg ? path.resolve(profileArg[1]) === profile : isDefaultProfile
+    // ps doesn't quote args and profile paths contain spaces (Application Support), so match the path text.
+    const onProfile = /(^|\s)--?profile\s/.test(command) ? command.includes(` ${profile}`) : isDefaultProfile
     return onProfile ? [Number(match[1])] : []
   })
 }
@@ -201,7 +201,7 @@ async function connect({ url, install }: { url: string; install: GeckoInstall })
   }
 }
 
-export const geckoExtensionSecret = crypto.randomUUID()
+export const geckoExtensionSecret = readGeckoSecret()
 let relayPort = 19988
 let installedExtensionFor: Browser | null = null
 
@@ -509,13 +509,17 @@ export async function attachRunningGeckoBrowser(): Promise<void> {
   }
 }
 
-export async function disconnectGeckoBrowser(): Promise<void> {
+let closing: Promise<void> = Promise.resolve()
+
+/** Relay close and process shutdown both call this; every caller awaits the same in-flight close. */
+export function disconnectGeckoBrowser(): Promise<void> {
   const current = shared
   shared = null
   agentPages.clear()
   sharedPages.clear()
-  const result = await current?.catch(() => {
-    return null
-  })
-  await result?.browser.close().catch(() => {})
+  const close = current?.then((result) => {
+    return result.browser.close()
+  }).catch(() => {})
+  closing = Promise.all([closing, close]).then(() => {})
+  return closing
 }

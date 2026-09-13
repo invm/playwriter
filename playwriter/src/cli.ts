@@ -27,6 +27,7 @@ import {
   type ExtensionStatus,
 } from './relay-client.js'
 import { findGeckoInstall } from './firefox-browser.js'
+import { registerNativeHost } from './firefox-native-host.js'
 import { discoverChromeInstances, resolveDirectInput, type DiscoveredInstance } from './chrome-discovery.js'
 import { getCloudClient, loadCloudAuth, saveCloudAuth, CloudClient, buildLiveUrl } from './cloud-client.js'
 
@@ -2096,6 +2097,14 @@ cli
   .hidden()
   .action(async () => {
     await ensureRelayServer({ logger: console, forceRestart: true })
+  })
+
+cli
+  .command('firefox install-helper', 'Register the helper that lets the signed Zen/Firefox add-on start the relay and restart the browser with automation')
+  .action(() => {
+    for (const manifestPath of registerNativeHost()) {
+      console.log(`Registered native messaging host: ${manifestPath}`)
+    }
   })
 
 cli.command('logfile', 'Print the path to the relay server log file').action(() => {

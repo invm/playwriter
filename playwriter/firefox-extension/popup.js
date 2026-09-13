@@ -11,7 +11,7 @@ function askRestart(text, automation) {
   $('confirm').classList.remove('hidden')
   $('confirm-text').textContent = text
   $('confirm-yes').onclick = async () => {
-    await relay('/firefox/restart', { automation }).catch(showError)
+    await relay('/firefox/restart', { automation }).catch(() => native({ type: 'restart', automation })).catch(showError)
     $('confirm-text').textContent = 'Restarting...'
     $('confirm-yes').disabled = true
     $('confirm-no').disabled = true
@@ -24,7 +24,7 @@ async function render() {
   const { status, state } = current
   $('dot').classList.toggle('on', state === 'connected')
   if (!status) {
-    $('status').textContent = 'Relay not running. Start a session: playwriter session new --browser firefox'
+    $('status').textContent = 'Relay not running. Restart with automation starts it.'
     $('detail').textContent = ''
   } else {
     $('status').textContent = `Relay v${status.version} · ${status.browser ?? 'Browser'} automation ${status.automated ? 'on' : 'off'}`
@@ -34,8 +34,6 @@ async function render() {
   toggle.disabled = state === 'relay-down' || state === 'restricted'
   toggle.textContent = state === 'connected' ? 'Disconnect this tab' : state === 'restricted' ? 'Cannot attach to this page' : 'Connect this tab'
   toggle.className = state === 'connected' ? '' : 'primary'
-  $('restart-automation').disabled = !status
-  $('restart-normal').disabled = !status
   await paintIcon(tab, current).catch(() => {})
 }
 

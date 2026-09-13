@@ -1,9 +1,16 @@
-const RELAY = `http://127.0.0.1:${globalThis.PLAYWRITER.port}`
+let config = globalThis.PLAYWRITER
+
+function native(message) {
+  return browser.runtime.sendNativeMessage('playwriter', message)
+}
 
 async function relay(path, body) {
-  const response = await fetch(`${RELAY}${path}`, {
+  if (!config.secret) {
+    config = await native({ type: 'config' }).catch(() => config)
+  }
+  const response = await fetch(`http://127.0.0.1:${config.port}${path}`, {
     method: body ? 'POST' : 'GET',
-    headers: { 'content-type': 'application/json', 'x-playwriter-secret': globalThis.PLAYWRITER.secret },
+    headers: { 'content-type': 'application/json', 'x-playwriter-secret': config.secret },
     body: body ? JSON.stringify(body) : undefined,
   })
   const json = await response.json()
