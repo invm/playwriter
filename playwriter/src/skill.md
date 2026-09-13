@@ -137,7 +137,7 @@ Multiple sessions reuse the same headless Chrome process. Recording is not avail
 
 If no Chrome binary is found, `playwriter session new --browser headless` will tell you to run `playwriter browser install` first to download Chrome for Testing.
 
-### Zen and Firefox (no extension)
+### Zen and Firefox (toolbar add-on)
 
 Drive the user's own Zen or Firefox profile, with their tabs and logins, over WebDriver BiDi. Zen is picked when both are installed.
 
