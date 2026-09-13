@@ -480,6 +480,35 @@ export async function getOrStartGeckoBrowser({ restart = false }: { restart?: bo
   return shared
 }
 
+let attaching = false
+
+export async function attachRunningGeckoBrowser(): Promise<void> {
+  if (attaching || (await currentGeckoBrowser())) {
+    return
+  }
+  attaching = true
+  try {
+    const install = findGeckoInstall()
+    const endpoint = install && readBiDiEndpoint(findDefaultProfile(install))
+    if (!install || !endpoint) {
+      return
+    }
+    const promise = connect({ url: endpoint.url, install }).then((browser) => {
+      return withAutomatedPages({ browser, install })
+    })
+    shared = promise
+    promise.catch(() => {
+      if (shared === promise) {
+        shared = null
+      }
+    })
+    await promise
+  } catch {
+  } finally {
+    attaching = false
+  }
+}
+
 export async function disconnectGeckoBrowser(): Promise<void> {
   const current = shared
   shared = null

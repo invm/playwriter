@@ -387,7 +387,7 @@ cli
   .command('session new', 'Create a new session and print the session ID')
   .option('--host <host>', 'Remote relay server host')
   .option('--token <token>', 'Authentication token (or use PLAYWRITER_TOKEN env var)')
-  .option('--browser <key>', 'Browser key when multiple browsers are available. Special values: "headless" (launch headless Chrome, no extension), "firefox" (your Zen or Firefox profile over WebDriver BiDi, no extension), "cloud" (cloud browser with stealth/proxies)')
+  .option('--browser <key>', 'Browser key when multiple browsers are available. Special values: "headless" (launch headless Chrome, no extension), "firefox" (your Zen or Firefox profile over WebDriver BiDi, toolbar add-on to connect tabs), "cloud" (cloud browser with stealth/proxies)')
   .option('--restart-browser', 'With --browser firefox: quit and reopen Zen/Firefox with automation on if it is running without it (tabs reopen)')
   .option('--patchright', 'Use @playwriter/patchright-core for stealth mode (bypasses bot detection)')
   .option('--direct [endpoint]', 'Use direct CDP connection without the extension. Enable debugging first at chrome://inspect/#remote-debugging or launch Chrome with --remote-debugging-port=9222. Auto-discovers instances or accepts an explicit ws:// endpoint')

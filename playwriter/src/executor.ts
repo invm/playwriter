@@ -39,7 +39,7 @@ import { createRecordingApi, createStreamApi } from './screen-recording.js'
 import { createDemoVideo } from './ffmpeg.js'
 import { type GhostCursorClientOptions } from './ghost-cursor.js'
 import { GhostCursorController } from './ghost-cursor-controller.js'
-import { automatedPages, disconnectGeckoBrowser, getOrStartGeckoBrowser, isAgentPage, isAutomatedPage, markAgentPage, scopeGeckoBrowser, scopeGeckoContext, sharedPage } from './firefox-browser.js'
+import { getOrStartGeckoBrowser, isAgentPage, isAutomatedPage, markAgentPage, scopeGeckoBrowser, scopeGeckoContext, sharedPage } from './firefox-browser.js'
 
 
 const __filename = fileURLToPath(import.meta.url)
@@ -1119,10 +1119,7 @@ export class PlaywrightExecutor {
       this.context?.off('page', this.onFirefoxPopup)
       await this.closeAgentPage()
       this.clearConnectionState()
-      const wasTracked = PlaywrightExecutor._firefoxExecutors.delete(this)
-      if (wasTracked && PlaywrightExecutor._firefoxExecutors.size === 0 && automatedPages().length === 0) {
-        await disconnectGeckoBrowser()
-      }
+      PlaywrightExecutor._firefoxExecutors.delete(this)
       return
     }
     if (!this.isHeadlessMode()) {

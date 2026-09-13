@@ -2,7 +2,7 @@ import { startPlayWriterCDPRelayServer } from './cdp-relay.js'
 import { createFileLogger } from './create-logger.js'
 import { waitForRelayVersion } from './relay-client.js'
 import { LOG_CDP_FILE_PATH } from './utils.js'
-import { disconnectGeckoBrowser } from './firefox-browser.js'
+import { attachRunningGeckoBrowser, disconnectGeckoBrowser } from './firefox-browser.js'
 
 process.title = 'playwriter-ws-server'
 
@@ -48,6 +48,9 @@ export async function startServer({
     }
     throw err
   }
+
+  void attachRunningGeckoBrowser()
+  setInterval(() => void attachRunningGeckoBrowser(), 5000).unref()
 
   console.log('CDP Relay Server running. Press Ctrl+C to stop.')
   console.log('Logs are being written to:', logger.logFilePath)
