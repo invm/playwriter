@@ -165,7 +165,9 @@ MCP: set `PLAYWRITER_BROWSER` to `firefox` (or `zen`) in the MCP client config. 
 ```
 
 - If the browser is already open without automation, or a crashed relay still holds its automation session, the command fails with a hint. Ask the user, then rerun with `--restart-browser`: playwriter quits the browser gracefully and reopens it on the same profile with automation on, and tabs reopen. In a terminal the command offers the restart itself.
-- Every session gets its own new tab. Open tabs that loaded are visible in `context.pages()`; tabs restored but never loaded are not. Only touch them when the user asks.
+- While automation is on, playwriter installs its toolbar extension in the browser. The user clicks the icon on a tab and picks "Connect this tab", the same as the Chrome extension. The popup also shows relay status and has "Restart with automation" and "Restart normally", which ask for confirmation.
+- `context.pages()` only lists connected tabs and tabs the agent opened. A session works on a connected tab when there is one, otherwise it opens its own tab. If the user wants you on an existing tab, ask them to connect it from the extension.
+- Automation stays on until the user disconnects the last tab. The popup then offers to restart the browser normally, and tabs reopen.
 - The session tab is brought to front before each command, because Gecko drops keyboard input in background tabs.
 - `snapshot` and `screenshotWithAccessibilityLabels` work as in Chrome. CDP-only helpers (`getCDPSession`, `getStylesForLocator`, React source, debugger, editor), screen recording and the toolbar are not available.
 - Sites can detect automation: `navigator.webdriver` is true.

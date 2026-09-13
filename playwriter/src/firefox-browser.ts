@@ -1,8 +1,10 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import crypto from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import { execFileSync, spawn } from 'node:child_process'
-import { firefox, type Browser } from '@xmorse/playwright-core'
+import { firefox, type Browser, type BrowserContext, type Page } from '@xmorse/playwright-core'
 
 export interface GeckoInstall {
   name: 'Zen' | 'Firefox'
@@ -114,10 +116,11 @@ function runningPids({ install, profile }: { install: GeckoInstall; profile: str
 
 async function quitGracefully({ install, pids }: { install: GeckoInstall; pids: number[] }): Promise<void> {
   const platform = os.platform()
-  if (platform === 'darwin' && install.executablePath.includes('.app/')) {
+  const customProfile = !!process.env.PLAYWRITER_FIREFOX_PROFILE
+  if (platform === 'darwin' && install.executablePath.includes('.app/') && !customProfile) {
     const appPath = install.executablePath.slice(0, install.executablePath.indexOf('.app/') + 4)
     execFileSync('osascript', ['-e', `quit app ${JSON.stringify(appPath)}`])
-  } else if (platform === 'win32') {
+  } else if (platform === 'win32' && !customProfile) {
     try {
       execFileSync('taskkill', ['/IM', path.basename(install.executablePath)], { stdio: 'ignore' })
     } catch {}
@@ -172,6 +175,156 @@ async function connect(url: string, install: GeckoInstall): Promise<Browser> {
     }
     throw error
   }
+}
+
+export const geckoExtensionSecret = crypto.randomUUID()
+let relayPort = 19988
+let installedExtensionFor: Browser | null = null
+
+export function setGeckoRelayPort(port: number) {
+  relayPort = port
+}
+
+const agentPages = new Set<Page>()
+const sharedPages = new Set<Page>()
+
+function track(set: Set<Page>, page: Page) {
+  set.add(page)
+  page.once('close', () => {
+    set.delete(page)
+  })
+}
+
+export function markAgentPage(page: Page) {
+  track(agentPages, page)
+}
+
+export function isAgentPage(page: Page): boolean {
+  return agentPages.has(page)
+}
+
+export function isAutomatedPage(page: Page): boolean {
+  return agentPages.has(page) || sharedPages.has(page)
+}
+
+export function automatedPages(): Page[] {
+  return [...sharedPages, ...agentPages].filter((page, index, all) => !page.isClosed() && all.indexOf(page) === index)
+}
+
+export function sharedPage(): Page | undefined {
+  return [...sharedPages].find((page) => !page.isClosed())
+}
+
+export function scopeGeckoContext(context: BrowserContext): BrowserContext {
+  return new Proxy(context, {
+    get(target, prop) {
+      if (prop === 'pages') {
+        return () => target.pages().filter((page) => agentPages.has(page) || sharedPages.has(page))
+      }
+      if (prop === 'newPage') {
+        return async (...args: Parameters<BrowserContext['newPage']>) => {
+          const page = await target.newPage(...args)
+          markAgentPage(page)
+          return page
+        }
+      }
+      const value = Reflect.get(target, prop, target)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+}
+
+async function findPageByNonce(pages: Page[], nonce: string): Promise<Page | undefined> {
+  const matches = await Promise.all(
+    pages.map((page) => {
+      const read = page.evaluate((name) => document.documentElement.hasAttribute(name), `data-playwriter-${nonce}`).catch(() => false)
+      return Promise.race([read, new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2000))])
+    }),
+  )
+  return pages[matches.indexOf(true)]
+}
+
+export async function geckoTabAction({ nonce, action }: { nonce: string; action: 'lookup' | 'connect' | 'disconnect' }) {
+  if (!/^[a-z0-9-]{8,64}$/.test(nonce)) {
+    throw new Error('Invalid nonce')
+  }
+  const connected = await currentGeckoBrowser()
+  if (action === 'lookup') {
+    const page = connected ? await findPageByNonce(automatedPages(), nonce) : undefined
+    return { automated: !!page, tabs: automatedPages().length }
+  }
+  const { browser } = connected ?? (await getOrStartGeckoBrowser())
+  const pages = action === 'connect' ? browser.contexts()[0].pages() : automatedPages()
+  const page = await findPageByNonce(pages, nonce)
+  if (!page) {
+    throw new Error(action === 'connect' ? 'Tab not found. Reload the tab and try again.' : 'This tab is not connected.')
+  }
+  if (action === 'connect') {
+    track(sharedPages, page)
+  } else {
+    sharedPages.delete(page)
+    agentPages.delete(page)
+  }
+  return { automated: action === 'connect', tabs: automatedPages().length }
+}
+
+async function currentGeckoBrowser() {
+  const result = await shared?.catch(() => null)
+  return result?.browser.isConnected() ? result : null
+}
+
+export async function geckoStatus() {
+  const install = findGeckoInstall()
+  const connected = await currentGeckoBrowser()
+  return { browser: install?.name ?? null, automated: !!connected, tabs: connected ? automatedPages().length : 0 }
+}
+
+export async function restartGeckoBrowser({ automation }: { automation: boolean }) {
+  const install = findGeckoInstall()
+  if (!install) {
+    throw new Error('Zen or Firefox not found.')
+  }
+  const profile = findDefaultProfile(install)
+  await disconnectGeckoBrowser()
+  const pids = runningPids({ install, profile })
+  if (pids.length) {
+    await quitGracefully({ install, pids })
+  }
+  if (automation) {
+    await getOrStartGeckoBrowser()
+    return
+  }
+  spawn(install.executablePath, ['--profile', profile], { detached: true, stdio: 'ignore' }).unref()
+}
+
+async function installExtension(browser: Browser) {
+  if (installedExtensionFor === browser) {
+    return
+  }
+  const source = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'firefox-extension')
+  const target = path.join(os.homedir(), '.playwriter', `firefox-extension-${relayPort}`)
+  fs.rmSync(target, { recursive: true, force: true })
+  fs.cpSync(source, target, { recursive: true })
+  fs.writeFileSync(path.join(target, 'config.js'), `globalThis.PLAYWRITER = ${JSON.stringify({ port: relayPort, secret: geckoExtensionSecret })}\n`)
+  const connection = (browser as unknown as { _connection: { toImpl?: (object: unknown) => { _browserSession: { send(method: string, params: object): Promise<unknown> } } } })._connection
+  const impl = connection.toImpl?.(browser)
+  if (!impl) {
+    return
+  }
+  await impl._browserSession.send('webExtension.install', { extensionData: { type: 'path', path: target } })
+  installedExtensionFor = browser
+}
+
+async function withAutomatedPages(result: { browser: Browser; install: GeckoInstall }) {
+  const context = result.browser.contexts()[0]
+  context.on('page', async (page) => {
+    const opener = await page.opener().catch(() => null)
+    if (opener && (agentPages.has(opener) || sharedPages.has(opener))) {
+      markAgentPage(page)
+    }
+  })
+  await installExtension(result.browser).catch(() => {})
+  return result
 }
 
 async function startAndConnect({ restart }: { restart: boolean }): Promise<{ browser: Browser; install: GeckoInstall }> {
@@ -240,7 +393,7 @@ export async function getOrStartGeckoBrowser({ restart = false }: { restart?: bo
     }
   }
   if (!shared) {
-    const promise = startAndConnect({ restart })
+    const promise = startAndConnect({ restart }).then(withAutomatedPages)
     shared = promise
     promise.catch(() => {
       if (shared === promise) {
@@ -254,6 +407,8 @@ export async function getOrStartGeckoBrowser({ restart = false }: { restart?: bo
 export async function disconnectGeckoBrowser(): Promise<void> {
   const current = shared
   shared = null
+  agentPages.clear()
+  sharedPages.clear()
   const result = await current?.catch(() => null)
   await result?.browser.close().catch(() => {})
 }

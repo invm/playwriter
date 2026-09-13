@@ -113,6 +113,7 @@ export async function startPlayWriterCDPRelayServer({
   cdpLogger?: CdpLogger
 } = {}): Promise<RelayServer> {
   const emitter = new EventEmitter()
+  void import('./firefox-browser.js').then(({ setGeckoRelayPort }) => setGeckoRelayPort(port))
   const store = relayState.createRelayStore()
   const extensionDownloadBehavior = new Map<string, Protocol.Browser.SetDownloadBehaviorRequest>()
 
@@ -2018,6 +2019,44 @@ export async function startPlayWriterCDPRelayServer({
 
     return next()
   }
+
+  app.use('/firefox/*', async (c, next) => {
+    const { geckoExtensionSecret } = await import('./firefox-browser.js')
+    if (c.req.header('x-playwriter-secret') !== geckoExtensionSecret) {
+      return c.text('Forbidden', 403)
+    }
+    return next()
+  })
+
+  app.get('/firefox/status', async (c) => {
+    const { geckoStatus } = await import('./firefox-browser.js')
+    const status = await geckoStatus()
+    const manager = await getExecutorManager()
+    const sessions = manager.listSessions().filter((session) => session.browser === status.browser).length
+    return c.json({ ...status, version: VERSION, sessions })
+  })
+
+  app.post('/firefox/tab', async (c) => {
+    const body = (await c.req.json()) as { nonce?: string; action?: 'lookup' | 'connect' | 'disconnect' }
+    if (!body.nonce || !['lookup', 'connect', 'disconnect'].includes(body.action ?? '')) {
+      return c.json({ error: 'nonce and action are required' }, 400)
+    }
+    try {
+      const { geckoTabAction } = await import('./firefox-browser.js')
+      return c.json(await geckoTabAction({ nonce: body.nonce, action: body.action! }))
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 500)
+    }
+  })
+
+  app.post('/firefox/restart', async (c) => {
+    const body = (await c.req.json()) as { automation?: boolean }
+    const { restartGeckoBrowser } = await import('./firefox-browser.js')
+    restartGeckoBrowser({ automation: !!body.automation }).catch((error) => {
+      logger?.error('Firefox restart failed:', error)
+    })
+    return c.json({ ok: true })
+  })
 
   app.use('/cli/*', privilegedRouteMiddleware)
   app.use('/recording/*', privilegedRouteMiddleware)

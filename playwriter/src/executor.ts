@@ -39,7 +39,7 @@ import { createRecordingApi, createStreamApi } from './screen-recording.js'
 import { createDemoVideo } from './ffmpeg.js'
 import { type GhostCursorClientOptions } from './ghost-cursor.js'
 import { GhostCursorController } from './ghost-cursor-controller.js'
-import { disconnectGeckoBrowser, getOrStartGeckoBrowser } from './firefox-browser.js'
+import { automatedPages, disconnectGeckoBrowser, getOrStartGeckoBrowser, isAgentPage, isAutomatedPage, markAgentPage, scopeGeckoContext, sharedPage } from './firefox-browser.js'
 
 
 const __filename = fileURLToPath(import.meta.url)
@@ -1012,6 +1012,18 @@ export class PlaywrightExecutor {
     }
   }
 
+  private async newAgentPage(context: BrowserContext): Promise<Page> {
+    const page = await context.newPage()
+    markAgentPage(page)
+    return page
+  }
+
+  private async closeAgentPage() {
+    if (this.page && isAgentPage(this.page)) {
+      await this.page.close().catch(() => {})
+    }
+  }
+
   private async connectFirefoxBrowser(): Promise<{ browser: Browser; page: Page; context: BrowserContext }> {
     const { browser } = await getOrStartGeckoBrowser()
     const context = browser.contexts()[0]
@@ -1019,7 +1031,7 @@ export class PlaywrightExecutor {
     context.setDefaultNavigationTimeout(10000)
     context.off('page', this.onFirefoxPopup)
     context.on('page', this.onFirefoxPopup)
-    const page = await context.newPage()
+    const page = sharedPage() ?? (await this.newAgentPage(context))
     this.setupPageListeners(page)
     PlaywrightExecutor._firefoxExecutors.add(this)
     return { browser, page, context }
@@ -1093,12 +1105,11 @@ export class PlaywrightExecutor {
    *  closed automatically so the Chrome process doesn't linger. */
   async closeHeadlessContext(): Promise<void> {
     if (this.isFirefoxMode()) {
-      const page = this.page
       this.context?.off('page', this.onFirefoxPopup)
+      await this.closeAgentPage()
       this.clearConnectionState()
-      await page?.close().catch(() => {})
       const wasTracked = PlaywrightExecutor._firefoxExecutors.delete(this)
-      if (wasTracked && PlaywrightExecutor._firefoxExecutors.size === 0) {
+      if (wasTracked && PlaywrightExecutor._firefoxExecutors.size === 0 && automatedPages().length === 0) {
         await disconnectGeckoBrowser()
       }
       return
@@ -1171,12 +1182,12 @@ export class PlaywrightExecutor {
   }
 
   private async getCurrentPage(timeout = 10000): Promise<Page> {
-    if (this.page && !this.page.isClosed()) {
+    if (this.page && !this.page.isClosed() && (!this.isFirefoxMode() || isAutomatedPage(this.page))) {
       return this.page
     }
 
     if (this.isFirefoxMode() && this.context) {
-      this.page = await this.context.newPage()
+      this.page = sharedPage() ?? (await this.newAgentPage(this.context))
       this.setupPageListeners(this.page)
       return this.page
     }
@@ -1207,7 +1218,7 @@ export class PlaywrightExecutor {
     try {
       if (this.isFirefoxMode()) {
         this.context?.off('page', this.onFirefoxPopup)
-        await this.page?.close().catch(() => {})
+        await this.closeAgentPage()
       } else if (this.isHeadlessMode()) {
         // In headless mode, only close this session's context, not the shared browser.
         // Other headless sessions share the same browser instance.
@@ -1286,7 +1297,7 @@ export class PlaywrightExecutor {
 
       await this.ensureConnection()
       const page = await this.getCurrentPage(timeout)
-      const context = this.context || page.context()
+      const context = this.isFirefoxMode() ? scopeGeckoContext(this.context || page.context()) : this.context || page.context()
       if (this.isFirefoxMode()) {
         await page.bringToFront().catch(() => {})
       }
