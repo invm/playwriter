@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import util from 'node:util'
 import { fileURLToPath } from 'node:url'
+import readline from 'node:readline/promises'
 import { goke, openInBrowser, isAgent } from 'goke'
 import { z } from 'zod'
 import pc from 'picocolors'
@@ -25,6 +26,8 @@ import {
   getExtensionStatus,
   type ExtensionStatus,
 } from './relay-client.js'
+import { findGeckoInstall } from './firefox-browser.js'
+import { registerNativeHost } from './firefox-native-host.js'
 import { discoverChromeInstances, resolveDirectInput, type DiscoveredInstance } from './chrome-discovery.js'
 import { getCloudClient, loadCloudAuth, saveCloudAuth, CloudClient, buildLiveUrl } from './cloud-client.js'
 
@@ -368,7 +371,7 @@ async function executeCode(options: {
 // Unified browser option type used in the multi-browser selection table
 interface BrowserOption {
   key: string
-  type: 'extension' | 'direct' | 'cloud' | 'headless'
+  type: 'extension' | 'direct' | 'cloud' | 'headless' | 'firefox'
   browser: string
   profile: string
   /** For extension entries */
@@ -385,7 +388,8 @@ cli
   .command('session new', 'Create a new session and print the session ID')
   .option('--host <host>', 'Remote relay server host')
   .option('--token <token>', 'Authentication token (or use PLAYWRITER_TOKEN env var)')
-  .option('--browser <key>', 'Browser key when multiple browsers are available. Special values: "headless" (launch headless Chrome, no extension), "cloud" (cloud browser with stealth/proxies)')
+  .option('--browser <key>', 'Browser key when multiple browsers are available. Special values: "headless" (launch headless Chrome, no extension), "firefox" (your Zen or Firefox profile over WebDriver BiDi, toolbar add-on to connect tabs), "cloud" (cloud browser with stealth/proxies)')
+  .option('--restart-browser', 'With --browser firefox: quit and reopen Zen/Firefox with automation on if it is running without it (tabs reopen)')
   .option('--patchright', 'Use @playwriter/patchright-core for stealth mode (bypasses bot detection)')
   .option('--direct [endpoint]', 'Use direct CDP connection without the extension. Enable debugging first at chrome://inspect/#remote-debugging or launch Chrome with --remote-debugging-port=9222. Auto-discovers instances or accepts an explicit ws:// endpoint')
   .option('--proxy <region>', 'Enable residential proxy for cloud browser (e.g. us, de, jp). Disabled by default. Use for anti-detection or geo-targeting.')
@@ -400,6 +404,42 @@ cli
     const isLocal = !options.host && !process.env.PLAYWRITER_HOST
 
     // --browser headless: launch headless Chrome via chromium.launch(), no extension
+    if (options.browser === 'firefox' || options.browser === 'zen') {
+      await ensureRelayForSessionCreation(isLocal)
+      const serverUrl = await getServerUrl(options.host)
+      const createSession = async (restartBrowser: boolean) => {
+        const response = await fetch(`${serverUrl}/cli/session/new`, {
+          method: 'POST',
+          headers: buildAuthHeaders({ token: options.token, json: true }),
+          body: JSON.stringify({ firefox: true, restartBrowser, cwd: process.cwd() }),
+        })
+        const json = (await response.json().catch(() => {
+          return {}
+        })) as { id?: string; browser?: string; error?: string; needsRestart?: boolean; warning?: string | null }
+        return { ok: response.ok, status: response.status, ...json }
+      }
+      let result = await createSession(Boolean(options.restartBrowser))
+      if (result.needsRestart && !isAgent && process.stdin.isTTY) {
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+        const answer = await rl.question(`${result.error} Restart it now? [y/N] `)
+        rl.close()
+        if (/^y(es)?$/i.test(answer.trim())) {
+          result = await createSession(true)
+        }
+      }
+      if (!result.ok || !result.id) {
+        console.error(`Error: ${result.error ?? result.status}`)
+        if (result.needsRestart) {
+          console.error('Run again with --restart-browser to quit and reopen it with automation on. Ask the user first, the browser window closes briefly.')
+        }
+        process.exit(1)
+      }
+      printSessionWarning(result)
+      console.log(`Session ${result.id} created (${result.browser}). Use with: playwriter -s ${result.id} -e "..."`)
+      console.log(pc.dim(`NOTE: the session has its own tab. It is focused before each command because ${result.browser} ignores keyboard input in background tabs. Sites can detect automation (navigator.webdriver is true).`))
+      return
+    }
+
     if (options.browser === 'headless') {
       try {
         await ensureRelayForSessionCreation(isLocal)
@@ -1766,6 +1806,11 @@ cli
       }
     })()
 
+    const geckoInstall = isLocal ? findGeckoInstall() : null
+    const firefoxOption: BrowserOption[] = geckoInstall
+      ? [{ key: 'firefox', type: 'firefox', browser: geckoInstall.name, profile: 'default profile' }]
+      : []
+
     const allOptions: BrowserOption[] = [
       ...extensions.map((ext) => {
         return {
@@ -1778,6 +1823,7 @@ cli
       }),
       ...directInstances.map(instanceToBrowserOption),
       ...headlessOption,
+      ...firefoxOption,
       ...cloudOptions,
     ]
 
@@ -2051,6 +2097,14 @@ cli
   .hidden()
   .action(async () => {
     await ensureRelayServer({ logger: console, forceRestart: true })
+  })
+
+cli
+  .command('firefox install-helper', 'Register the helper that lets the signed Zen/Firefox add-on start the relay and restart the browser with automation')
+  .action(() => {
+    for (const manifestPath of registerNativeHost()) {
+      console.log(`Registered native messaging host: ${manifestPath}`)
+    }
   })
 
 cli.command('logfile', 'Print the path to the relay server log file').action(() => {

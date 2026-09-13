@@ -53,6 +53,17 @@ export async function getChromium(): Promise<Chromium> {
   return _chromium!
 }
 
+type Firefox = typeof import('@xmorse/playwright-core').firefox
+
+/**
+ * Returns the firefox BrowserType. Lazy so modules that import firefox-browser.ts
+ * statically (cli, relay) don't pay the playwright-core load at startup.
+ */
+export async function getFirefox(): Promise<Firefox> {
+  const mod = await import('@xmorse/playwright-core')
+  return mod.firefox
+}
+
 export function isPatchrightEnabled(): boolean {
   return process.env.PLAYWRITER_PATCHRIGHT === '1' || process.env.PLAYWRITER_PATCHRIGHT === 'true'
 }

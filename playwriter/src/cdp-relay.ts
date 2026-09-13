@@ -36,6 +36,7 @@ import { RecordingRelay } from './recording-relay.js'
 import { StreamRelay } from './stream-relay.js'
 import { appendSessionToWsUrl } from './chrome-discovery.js'
 import * as relayState from './relay-state.js'
+import { disconnectGeckoBrowser, findGeckoInstall, geckoExtensionSecret, geckoStatus, geckoTabAction, getOrStartGeckoBrowser, isGeckoRestartError, isGeckoTabAction, restartGeckoBrowser, setGeckoRelayPort } from './firefox-browser.js'
 
 /**
  * Checks if a target should be filtered out (not exposed to Playwright).
@@ -113,6 +114,7 @@ export async function startPlayWriterCDPRelayServer({
   cdpLogger?: CdpLogger
 } = {}): Promise<RelayServer> {
   const emitter = new EventEmitter()
+  setGeckoRelayPort(port)
   const store = relayState.createRelayStore()
   const extensionDownloadBehavior = new Map<string, Protocol.Browser.SetDownloadBehaviorRequest>()
 
@@ -2019,6 +2021,46 @@ export async function startPlayWriterCDPRelayServer({
     return next()
   }
 
+  app.use('/firefox/*', async (c, next) => {
+    if (c.req.header('x-playwriter-secret') !== geckoExtensionSecret) {
+      return c.text('Forbidden', 403)
+    }
+    return next()
+  })
+
+  app.get('/firefox/status', async (c) => {
+    const status = await geckoStatus()
+    const manager = await getExecutorManager()
+    const sessions = manager.listSessions().filter((session) => {
+      return session.browser === status.browser
+    }).length
+    return c.json({ ...status, version: VERSION, sessions })
+  })
+
+  app.post('/firefox/tab', async (c) => {
+    const body = (await c.req.json()) as { nonce?: string; action?: string }
+    const { nonce, action } = body
+    if (!nonce || !isGeckoTabAction(action)) {
+      return c.json({ error: 'nonce and action are required' }, 400)
+    }
+    try {
+      return c.json(await geckoTabAction({ nonce, action }))
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 500)
+    }
+  })
+
+  app.post('/firefox/restart', async (c) => {
+    const body = (await c.req.json()) as { automation?: boolean }
+    try {
+      await restartGeckoBrowser({ automation: !!body.automation })
+      return c.json({ ok: true })
+    } catch (error) {
+      logger?.error('Firefox restart failed:', error)
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 500)
+    }
+  })
+
   app.use('/cli/*', privilegedRouteMiddleware)
   app.use('/recording/*', privilegedRouteMiddleware)
   app.use('/recorder/*', privilegedRouteMiddleware)
@@ -2128,6 +2170,8 @@ export async function startPlayWriterCDPRelayServer({
       cwd?: string
       /** Direct CDP WebSocket URL — bypasses extension, connects straight to Chrome */
       cdpEndpoint?: string
+      firefox?: boolean
+      restartBrowser?: boolean
       /** Launch a headless Chrome via chromium.launch() — no extension or relay CDP routing */
       headless?: boolean
       /** Browser name from discovery (e.g. "Chrome", "Brave") */
@@ -2158,28 +2202,32 @@ export async function startPlayWriterCDPRelayServer({
     // Headless mode: launch Chrome via chromium.launch(), no extension needed.
     // Force connection immediately so missing Chrome errors surface at creation time,
     // not on first execute call.
-    if (body.headless) {
+    if (body.headless || body.firefox) {
       const manager = await getExecutorManager()
       const executor = manager.getExecutor({
         sessionId,
         cwd: cwd || undefined,
-        cdpConfig: { headless: true },
+        cdpConfig: body.firefox ? { firefox: true } : { headless: true },
         sessionMetadata: {
           extensionId: null,
-          browser: 'Chrome (Headless)',
+          browser: body.firefox ? (findGeckoInstall()?.name ?? 'Firefox') : 'Chrome (Headless)',
           profile: null,
         },
       })
       try {
+        if (body.firefox && body.restartBrowser) {
+          await getOrStartGeckoBrowser({ restart: true })
+        }
         await executor.reset()
       } catch (error) {
         manager.deleteExecutor(sessionId)
-        return c.json({ error: error instanceof Error ? error.message : String(error) }, 500)
+        const message = error instanceof Error ? error.message : String(error)
+        return c.json({ error: message, needsRestart: isGeckoRestartError(message) }, 500)
       }
       const metadata = executor.getSessionMetadata()
       return c.json({
         id: sessionId,
-        mode: 'headless' as const,
+        mode: body.firefox ? ('firefox' as const) : ('headless' as const),
         extensionId: metadata.extensionId,
         browser: metadata.browser,
         profile: metadata.profile,
@@ -2794,6 +2842,7 @@ export async function startPlayWriterCDPRelayServer({
       void import('./executor.js').then(({ PlaywrightExecutor }) => {
         return PlaywrightExecutor.closeSharedHeadlessBrowser()
       })
+      void disconnectGeckoBrowser()
 
       // Reset store state
       store.setState({

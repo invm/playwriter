@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import type { Protocol } from 'devtools-protocol'
 import { Sema } from 'async-sema'
 import type { ICDPSession } from './cdp-session.js'
-import { getCDPSessionForPage } from './cdp-session.js'
+import { getSnapshotSession } from './gecko-snapshot.js'
 
 // Import sharp at module level - resolves to null if not available
 const sharpPromise = import('sharp')
@@ -967,7 +967,7 @@ export async function getAriaSnapshot({
   interactiveOnly?: boolean
   cdp?: ICDPSession
 }): Promise<AriaSnapshotResult> {
-  const session = cdp || (await getCDPSessionForPage({ page }))
+  const session = cdp || (await getSnapshotSession({ page }))
 
   // Resolve FrameLocator to an actual Frame. FrameLocator (from locator.contentFrame())
   // is a scoping helper without CDP access. We need the real Frame from page.frames()
@@ -1395,7 +1395,7 @@ async function getLabelBoxesForRefs({
   cdp?: ICDPSession
 }): Promise<AriaLabel[]> {
   const log = logger?.info ?? logger?.error ?? console.error
-  const session = cdp || (await getCDPSessionForPage({ page }))
+  const session = cdp || (await getSnapshotSession({ page }))
   const sema = new Sema(maxConcurrency)
   const labelRefs = refs.filter((ref) => {
     return Boolean(ref.backendNodeId) && INTERACTIVE_ROLES.has(ref.role)
@@ -1502,7 +1502,7 @@ export async function showAriaRefLabels({
   log(`[showAriaRefLabels] ensureA11yClient: ${Date.now() - startTime}ms`)
 
   const cdpStart = Date.now()
-  const cdp = await getCDPSessionForPage({ page })
+  const cdp = await getSnapshotSession({ page })
   log(`[showAriaRefLabels] getCDPSessionForPage: ${Date.now() - cdpStart}ms`)
 
   try {

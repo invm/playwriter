@@ -160,19 +160,21 @@ export async function waitForConnectedExtensions(
 async function killRelayServer(options: { port: number; waitForFreeMs?: number }): Promise<void> {
   const { port, waitForFreeMs = 3000 } = options
 
-  try {
-    await killPortProcess({ port })
-  } catch {
-    return
-  }
-
-  const startTime = Date.now()
-  while (Date.now() - startTime < waitForFreeMs) {
-    const pids = await getListeningPidsForPort({ port }).catch(() => [])
-    if (pids.length === 0) {
+  // SIGTERM first so the relay runs its shutdown (closes the Zen/Firefox BiDi session), SIGKILL if it hangs.
+  for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
+    try {
+      await killPortProcess({ port, signal })
+    } catch {
       return
     }
-    await sleep(100)
+    const startTime = Date.now()
+    while (Date.now() - startTime < waitForFreeMs) {
+      const pids = await getListeningPidsForPort({ port }).catch(() => [])
+      if (pids.length === 0) {
+        return
+      }
+      await sleep(100)
+    }
   }
 }
 

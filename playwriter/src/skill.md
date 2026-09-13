@@ -137,6 +137,42 @@ Multiple sessions reuse the same headless Chrome process. Recording is not avail
 
 If no Chrome binary is found, `playwriter session new --browser headless` will tell you to run `playwriter browser install` first to download Chrome for Testing.
 
+### Zen and Firefox (toolbar add-on)
+
+Drive the user's own Zen or Firefox profile, with their tabs and logins, over WebDriver BiDi. Zen is picked when both are installed.
+
+```bash
+playwriter session new --browser firefox
+playwriter -s 1 -e "await page.goto('https://example.com')"
+playwriter -s 1 -e "console.log(await snapshot({ page }))"
+playwriter -s 1 -e "await page.getByRole('button', { name: 'Sign in' }).click()"
+```
+
+MCP: set `PLAYWRITER_BROWSER` to `firefox` (or `zen`) in the MCP client config. The MCP then runs code in a Zen/Firefox session on the local relay, so the CLI and MCP share one browser.
+
+```json
+{
+  "mcpServers": {
+    "playwriter": {
+      "command": "npx",
+      "args": ["-y", "playwriter@latest"],
+      "env": {
+        "PLAYWRITER_BROWSER": "firefox"
+      }
+    }
+  }
+}
+```
+
+- If the browser is already open without automation, or a crashed relay still holds its automation session, the command fails with a hint. Ask the user, then rerun with `--restart-browser`: playwriter quits the browser gracefully and reopens it on the same profile with automation on, and tabs reopen. In a terminal the command offers the restart itself.
+- While automation is on, playwriter installs its toolbar extension in the browser. The user clicks the icon on a tab and picks "Connect this tab", the same as the Chrome extension. The popup also shows relay status and has "Restart with automation" and "Restart normally", which ask for confirmation.
+- `context.pages()` only lists connected tabs and tabs the agent opened. A session works on a connected tab when there is one, otherwise it opens its own tab. If the user wants you on an existing tab, ask them to connect it from the extension.
+- Automation stays on until the user disconnects the last tab. The popup then offers to restart the browser normally, and tabs reopen.
+- The session tab is brought to front before each command, because Gecko drops keyboard input in background tabs.
+- `snapshot` and `screenshotWithAccessibilityLabels` work as in Chrome. CDP-only helpers (`getCDPSession`, `getStylesForLocator`, React source, debugger, editor), screen recording and the toolbar are not available.
+- Sites can detect automation: `navigator.webdriver` is true.
+- `PLAYWRITER_FIREFOX_PATH` and `PLAYWRITER_FIREFOX_PROFILE` override the executable and profile.
+
 ### Cloud browsers (stealth, proxies, CAPTCHA solving)
 
 Cloud browsers are full Chromium instances running in the cloud. They work exactly like a local Chrome session but with stealth and anti-detection built in. No local Chrome or extension needed.

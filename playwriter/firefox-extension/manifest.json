@@ -1,0 +1,15 @@
+{
+  "manifest_version": 2,
+  "name": "Playwriter",
+  "version": "0.1.2",
+  "description": "Connect Zen and Firefox tabs to Playwriter.",
+  "browser_specific_settings": { "gecko": { "id": "playwriter-zen@invm.github.io", "data_collection_permissions": { "required": ["none"] } } },
+  "permissions": ["tabs", "nativeMessaging", "<all_urls>"],
+  "background": { "scripts": ["config.js", "shared.js", "background.js"] },
+  "browser_action": {
+    "default_title": "Playwriter",
+    "default_popup": "popup.html",
+    "default_icon": { "16": "icons/icon-gray-16.png", "32": "icons/icon-gray-32.png" }
+  },
+  "icons": { "48": "icons/icon-gray-48.png", "128": "icons/icon-gray-128.png" }
+}
