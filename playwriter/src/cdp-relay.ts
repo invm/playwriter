@@ -2052,10 +2052,13 @@ export async function startPlayWriterCDPRelayServer({
 
   app.post('/firefox/restart', async (c) => {
     const body = (await c.req.json()) as { automation?: boolean }
-    restartGeckoBrowser({ automation: !!body.automation }).catch((error) => {
+    try {
+      await restartGeckoBrowser({ automation: !!body.automation })
+      return c.json({ ok: true })
+    } catch (error) {
       logger?.error('Firefox restart failed:', error)
-    })
-    return c.json({ ok: true })
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 500)
+    }
   })
 
   app.use('/cli/*', privilegedRouteMiddleware)

@@ -11,10 +11,19 @@ function askRestart(text, automation) {
   $('confirm').classList.remove('hidden')
   $('confirm-text').textContent = text
   $('confirm-yes').onclick = async () => {
-    await relay('/firefox/restart', { automation }).catch(() => native({ type: 'restart', automation })).catch(showError)
     $('confirm-text').textContent = 'Restarting...'
     $('confirm-yes').disabled = true
     $('confirm-no').disabled = true
+    try {
+      const result = current.status ? await relay('/firefox/restart', { automation }) : await native({ type: 'restart', automation })
+      if (result?.error) {
+        throw new Error(result.error)
+      }
+    } catch (error) {
+      showError(error)
+      $('confirm-text').textContent = 'Restart failed.'
+      $('confirm-no').disabled = false
+    }
   }
 }
 

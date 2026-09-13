@@ -140,7 +140,11 @@ async function quitGracefully({ install, pids }: { install: GeckoInstall; pids: 
   const customProfile = !!process.env.PLAYWRITER_FIREFOX_PROFILE
   if (platform === 'darwin' && install.executablePath.includes('.app/') && !customProfile) {
     const appPath = install.executablePath.slice(0, install.executablePath.indexOf('.app/') + 4)
-    execFileSync('osascript', ['-e', `quit app ${JSON.stringify(appPath)}`])
+    try {
+      execFileSync('osascript', ['-e', `quit app ${JSON.stringify(appPath)}`], { stdio: 'pipe' })
+    } catch (error) {
+      throw new Error(`${install.name} did not quit. A page asking to leave (unsaved form) or a quit dialog canceled it. Close it and retry.`, { cause: error })
+    }
   } else if (platform === 'win32' && !customProfile) {
     try {
       execFileSync('taskkill', ['/IM', path.basename(install.executablePath)], { stdio: 'ignore' })
