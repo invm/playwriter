@@ -39,6 +39,7 @@ import { createRecordingApi, createStreamApi } from './screen-recording.js'
 import { createDemoVideo } from './ffmpeg.js'
 import { type GhostCursorClientOptions } from './ghost-cursor.js'
 import { GhostCursorController } from './ghost-cursor-controller.js'
+import { disconnectGeckoBrowser, getOrStartGeckoBrowser } from './firefox-browser.js'
 
 
 const __filename = fileURLToPath(import.meta.url)
@@ -341,6 +342,7 @@ export interface CdpConfig {
   /** Launch a headless Chrome via chromium.launch() instead of connecting to an existing one.
    *  Uses direct Playwright browser management, no extension or relay CDP routing needed. */
   headless?: boolean
+  firefox?: boolean
 }
 
 export interface SessionMetadata {
@@ -871,6 +873,10 @@ export class PlaywrightExecutor {
     return !!this.cdpConfig.headless
   }
 
+  private isFirefoxMode(): boolean {
+    return !!this.cdpConfig.firefox
+  }
+
   /**
    * Connect to Chrome and set up context/page. Shared by ensureConnection and reset.
    * In headless mode, launches Chrome via chromium.launch().
@@ -881,6 +887,10 @@ export class PlaywrightExecutor {
     // Headless mode: launch Chrome directly via Playwright (no extension, no relay CDP routing)
     if (this.isHeadlessMode()) {
       return this.connectHeadlessBrowser()
+    }
+
+    if (this.isFirefoxMode()) {
+      return this.connectFirefoxBrowser()
     }
 
     if (this.isDirectCdpMode()) {
@@ -993,6 +1003,28 @@ export class PlaywrightExecutor {
     }
   }
 
+  private static _firefoxExecutors = new Set<PlaywrightExecutor>()
+
+  private onFirefoxPopup = async (page: Page) => {
+    const opener = await page.opener().catch(() => null)
+    if (opener && opener === this.page) {
+      this.setupPageListeners(page)
+    }
+  }
+
+  private async connectFirefoxBrowser(): Promise<{ browser: Browser; page: Page; context: BrowserContext }> {
+    const { browser } = await getOrStartGeckoBrowser()
+    const context = browser.contexts()[0]
+    context.setDefaultTimeout(60000)
+    context.setDefaultNavigationTimeout(10000)
+    context.off('page', this.onFirefoxPopup)
+    context.on('page', this.onFirefoxPopup)
+    const page = await context.newPage()
+    this.setupPageListeners(page)
+    PlaywrightExecutor._firefoxExecutors.add(this)
+    return { browser, page, context }
+  }
+
   /** Shared headless browser instance across all headless sessions.
    *  Uses a launch promise to prevent concurrent first-session races from
    *  spawning multiple browsers. The disconnect handler is registered once
@@ -1060,6 +1092,17 @@ export class PlaywrightExecutor {
    *  When the last headless executor is removed, the shared browser is also
    *  closed automatically so the Chrome process doesn't linger. */
   async closeHeadlessContext(): Promise<void> {
+    if (this.isFirefoxMode()) {
+      const page = this.page
+      this.context?.off('page', this.onFirefoxPopup)
+      this.clearConnectionState()
+      await page?.close().catch(() => {})
+      const wasTracked = PlaywrightExecutor._firefoxExecutors.delete(this)
+      if (wasTracked && PlaywrightExecutor._firefoxExecutors.size === 0) {
+        await disconnectGeckoBrowser()
+      }
+      return
+    }
     if (!this.isHeadlessMode()) {
       return
     }
@@ -1096,7 +1139,7 @@ export class PlaywrightExecutor {
   private async ensureConnection(): Promise<{ browser: Browser; page: Page }> {
     // In headless mode, also check the shared browser is still alive.
     // After a crash, isConnected() returns false and we need to reconnect.
-    const browserAlive = this.isHeadlessMode() ? this.browser?.isConnected() : true
+    const browserAlive = this.isHeadlessMode() || this.isFirefoxMode() ? this.browser?.isConnected() : true
     if (this.isConnected && this.browser && this.page && browserAlive) {
       return { browser: this.browser, page: this.page }
     }
@@ -1132,6 +1175,12 @@ export class PlaywrightExecutor {
       return this.page
     }
 
+    if (this.isFirefoxMode() && this.context) {
+      this.page = await this.context.newPage()
+      this.setupPageListeners(this.page)
+      return this.page
+    }
+
     if (this.browser) {
       const contexts = this.browser.contexts()
       if (contexts.length > 0) {
@@ -1156,7 +1205,10 @@ export class PlaywrightExecutor {
   async reset(): Promise<{ page: Page; context: BrowserContext }> {
     this.suppressPageCloseWarnings = true
     try {
-      if (this.isHeadlessMode()) {
+      if (this.isFirefoxMode()) {
+        this.context?.off('page', this.onFirefoxPopup)
+        await this.page?.close().catch(() => {})
+      } else if (this.isHeadlessMode()) {
         // In headless mode, only close this session's context, not the shared browser.
         // Other headless sessions share the same browser instance.
         if (this.context) {
@@ -1235,6 +1287,9 @@ export class PlaywrightExecutor {
       await this.ensureConnection()
       const page = await this.getCurrentPage(timeout)
       const context = this.context || page.context()
+      if (this.isFirefoxMode()) {
+        await page.bringToFront().catch(() => {})
+      }
 
       this.logger.log('Executing code:', code)
 
@@ -1282,7 +1337,6 @@ export class PlaywrightExecutor {
           throw new Error('snapshot requires a page')
         }
 
-        // Use new in-page implementation via getAriaSnapshot
         const {
           snapshot: rawSnapshot,
           refs,
@@ -1390,8 +1444,12 @@ export class PlaywrightExecutor {
         if (!hasGenerator) {
           const scriptPath = path.join(__dirname, '..', 'dist', 'selector-generator.js')
           const scriptContent = fs.readFileSync(scriptPath, 'utf-8')
-          const cdp = await getCDPSession({ page: elementPage })
-          await cdp.send('Runtime.evaluate', { expression: scriptContent })
+          if (elementPage.context().browser()?.browserType().name() === 'firefox') {
+            await elementPage.evaluate(scriptContent)
+          } else {
+            const cdp = await getCDPSession({ page: elementPage })
+            await cdp.send('Runtime.evaluate', { expression: scriptContent })
+          }
         }
         return await element.evaluate((el: any) => {
           const { createSelectorGenerator, toLocator } = (globalThis as any).__selectorGenerator

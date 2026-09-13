@@ -2128,6 +2128,8 @@ export async function startPlayWriterCDPRelayServer({
       cwd?: string
       /** Direct CDP WebSocket URL — bypasses extension, connects straight to Chrome */
       cdpEndpoint?: string
+      firefox?: boolean
+      restartBrowser?: boolean
       /** Launch a headless Chrome via chromium.launch() — no extension or relay CDP routing */
       headless?: boolean
       /** Browser name from discovery (e.g. "Chrome", "Brave") */
@@ -2158,28 +2160,33 @@ export async function startPlayWriterCDPRelayServer({
     // Headless mode: launch Chrome via chromium.launch(), no extension needed.
     // Force connection immediately so missing Chrome errors surface at creation time,
     // not on first execute call.
-    if (body.headless) {
+    if (body.headless || body.firefox) {
       const manager = await getExecutorManager()
+      const { findGeckoInstall, getOrStartGeckoBrowser, isGeckoRestartError } = await import('./firefox-browser.js')
       const executor = manager.getExecutor({
         sessionId,
         cwd: cwd || undefined,
-        cdpConfig: { headless: true },
+        cdpConfig: body.firefox ? { firefox: true } : { headless: true },
         sessionMetadata: {
           extensionId: null,
-          browser: 'Chrome (Headless)',
+          browser: body.firefox ? (findGeckoInstall()?.name ?? 'Firefox') : 'Chrome (Headless)',
           profile: null,
         },
       })
       try {
+        if (body.firefox && body.restartBrowser) {
+          await getOrStartGeckoBrowser({ restart: true })
+        }
         await executor.reset()
       } catch (error) {
         manager.deleteExecutor(sessionId)
-        return c.json({ error: error instanceof Error ? error.message : String(error) }, 500)
+        const message = error instanceof Error ? error.message : String(error)
+        return c.json({ error: message, needsRestart: isGeckoRestartError(message) }, 500)
       }
       const metadata = executor.getSessionMetadata()
       return c.json({
         id: sessionId,
-        mode: 'headless' as const,
+        mode: body.firefox ? ('firefox' as const) : ('headless' as const),
         extensionId: metadata.extensionId,
         browser: metadata.browser,
         profile: metadata.profile,
@@ -2793,6 +2800,9 @@ export async function startPlayWriterCDPRelayServer({
       // Close shared headless browser if any headless sessions were created (fire-and-forget)
       void import('./executor.js').then(({ PlaywrightExecutor }) => {
         return PlaywrightExecutor.closeSharedHeadlessBrowser()
+      })
+      void import('./firefox-browser.js').then(({ disconnectGeckoBrowser }) => {
+        return disconnectGeckoBrowser()
       })
 
       // Reset store state

@@ -52,18 +52,20 @@ export async function startServer({
   console.log('Logs are being written to:', logger.logFilePath)
   console.log('CDP logs are being written to:', LOG_CDP_FILE_PATH)
 
-  process.on('SIGINT', () => {
+  process.on('SIGINT', async () => {
     console.log('\nShutting down...')
     server.close()
+    await import('./firefox-browser.js').then(({ disconnectGeckoBrowser }) => disconnectGeckoBrowser()).catch(() => {})
     process.exit(0)
   })
 
-  process.on('SIGTERM', () => {
+  process.on('SIGTERM', async () => {
     console.log('\nShutting down...')
     server.close()
+    await import('./firefox-browser.js').then(({ disconnectGeckoBrowser }) => disconnectGeckoBrowser()).catch(() => {})
     process.exit(0)
   })
 
   return server
 }
-startServer().catch(logger.error)
+startServer({ port: Number(process.env.PLAYWRITER_PORT) || 19988 }).catch(logger.error)

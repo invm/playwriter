@@ -161,6 +161,59 @@ async function getOrCreateExecutor(): Promise<PlaywrightExecutor> {
   return executor
 }
 
+const firefoxMode = /^(firefox|zen)$/i.test(process.env.PLAYWRITER_BROWSER || '')
+let firefoxSessionId: string | null = null
+
+async function postRelay<T>(route: string, body: object, timeoutMs: number): Promise<{ status: number; json: T }> {
+  const response = await fetch(`http://127.0.0.1:${RELAY_PORT}${route}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
+  })
+  return { status: response.status, json: (await response.json()) as T }
+}
+
+async function getFirefoxSessionId(): Promise<string> {
+  if (firefoxSessionId) {
+    return firefoxSessionId
+  }
+  const { json } = await postRelay<{ id?: string; error?: string; needsRestart?: boolean }>('/cli/session/new', { firefox: true, cwd: process.cwd() }, 60000)
+  if (!json.id) {
+    const hint = json.needsRestart
+      ? ' Ask the user for permission, then run `playwriter session new --browser firefox --restart-browser` in a shell (the browser window closes briefly and tabs reopen), then retry.'
+      : ''
+    throw new Error(`${json.error}${hint}`)
+  }
+  firefoxSessionId = json.id
+  return json.id
+}
+
+type ExecuteResult = Awaited<ReturnType<PlaywrightExecutor['execute']>>
+
+async function executeFirefox(code: string, timeout: number): Promise<ExecuteResult> {
+  const sessionId = await getFirefoxSessionId()
+  const { status, json } = await postRelay<ExecuteResult>('/cli/execute', { sessionId, code, timeout, cwd: process.cwd() }, timeout + 30000)
+  if (status === 404) {
+    firefoxSessionId = null
+    return executeFirefox(code, timeout)
+  }
+  return json
+}
+
+async function resetFirefox(): Promise<{ pageUrl: string; pagesCount: number }> {
+  const sessionId = await getFirefoxSessionId()
+  const { status, json } = await postRelay<{ pageUrl: string; pagesCount: number; error?: string }>('/cli/reset', { sessionId }, 60000)
+  if (status === 404) {
+    firefoxSessionId = null
+    return resetFirefox()
+  }
+  if (json.error) {
+    throw new Error(json.error)
+  }
+  return json
+}
+
 async function checkRemoteServer({ host, port, token }: RemoteConfig): Promise<void> {
   const { httpBaseUrl } = parseRelayHost(host, port)
   const versionUrl = `${httpBaseUrl}/version`
@@ -261,8 +314,7 @@ server.tool(
         }
       }
 
-      const exec = await getOrCreateExecutor()
-      const result = await exec.execute(code, timeout)
+      const result = firefoxMode ? await executeFirefox(code, timeout) : await (await getOrCreateExecutor()).execute(code, timeout)
 
       // Transform executor result to MCP format
       // Append screenshot metadata to text for MCP (image is included inline as content)
@@ -336,14 +388,14 @@ server.tool(
         }
       }
 
-      const exec = await getOrCreateExecutor()
-      const { page, context } = await exec.reset()
-      const pagesCount = context.pages().length
+      const { pageUrl, pagesCount } = firefoxMode
+        ? await resetFirefox()
+        : await (await getOrCreateExecutor()).reset().then(({ page, context }) => ({ pageUrl: page.url(), pagesCount: context.pages().length }))
       return {
         content: [
           {
             type: 'text',
-            text: `Connection reset successfully. ${pagesCount} page(s) available. Current page URL: ${page.url()}`,
+            text: `Connection reset successfully. ${pagesCount} page(s) available. Current page URL: ${pageUrl}`,
           },
         ],
       }
@@ -367,6 +419,9 @@ export async function startMcp(options: { host?: string; token?: string } = {}) 
   // In direct CDP mode (PLAYWRITER_DIRECT env var), no relay server needed
   if (process.env.PLAYWRITER_DIRECT) {
     mcpLog(`Using direct CDP connection: ${process.env.PLAYWRITER_DIRECT}`)
+  } else if (firefoxMode) {
+    mcpLog('Using Zen/Firefox through the local relay')
+    await ensureRelayServerForMcp()
   } else {
     const remote = getRemoteConfig()
     if (!remote) {
