@@ -41,7 +41,7 @@ playwriter -s 1 -e 'console.log(await snapshot({ page }))'
 playwriter -s 1 -e 'await page.locator("aria-ref=e5").click()'
 ```
 
-Zen or Firefox: `playwriter session new --browser firefox` drives your own profile over WebDriver BiDi, no extension needed.
+Zen or Firefox: `playwriter session new --browser firefox` drives your own profile over WebDriver BiDi, with a toolbar add-on to connect tabs. See [docs/firefox.md](./docs/firefox.md).
 
 > **Tip:** Always use single quotes for `-e` to prevent bash from interpreting `$`, backticks, and `\` in your JS code. Use double quotes for strings inside the JS.
 
